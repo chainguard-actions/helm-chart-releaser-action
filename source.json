@@ -1,0 +1,4 @@
+{
+  "upstream": "helm/chart-releaser-action",
+  "version": "v1.7.0"
+}

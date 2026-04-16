@@ -1,0 +1,146 @@
+# Copyright The Helm Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: "Helm Chart Releaser"
+description: "Host a Helm charts repo on GitHub Pages"
+author: "The Helm authors"
+branding:
+  color: blue
+  icon: anchor
+inputs:
+  version:
+    description: "The chart-releaser version to use (default: v1.7.0)"
+    required: false
+    default: v1.7.0
+  config:
+    description: "The relative path to the chart-releaser config file"
+    required: false
+  charts_dir:
+    description: The charts directory
+    required: false
+    default: charts
+  install_dir:
+    description: "Where to install the cr tool"
+    required: false
+  install_only:
+    description: "Just install cr tool"
+    required: false
+  skip_packaging:
+    description: "Skip the packaging option (do your custom packaging before running this action)"
+    required: false
+  skip_existing:
+    description: "Skip package upload if release exists"
+    required: false
+  skip_upload:
+    description: "Skip package upload"
+    required: false
+  mark_as_latest:
+    description: Mark the created GitHub release as 'latest'
+    required: false
+    default: true
+  packages_with_index:
+    description: "Upload chart packages directly into publishing branch"
+    required: false
+    default: false
+  pages_branch:
+    description: "Name of the branch to be used to push the index and artifacts. (default to: gh-pages but it is not set in the action it is a default value for the chart-releaser binary)"
+    required: false
+outputs:
+  changed_charts:
+    description: "A comma-separated list of charts that were released on this run. Will be an empty string if no updates were detected, will be unset if `--skip_packaging` is used: in the latter case your custom packaging step is responsible for setting its own outputs if you need them."
+    value: ${{ steps.release.outputs.changed_charts }}
+  chart_version:
+    description: "The version of the most recently generated charts; will be set even if no charts have been updated since the last run."
+    value: ${{ steps.release.outputs.chart_version }}
+
+runs:
+  using: composite
+  steps:
+    - id: release
+      env:
+        INPUT_CHARTS_DIR: ${{ inputs.charts_dir }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_INSTALL_DIR: ${{ inputs.install_dir }}
+        INPUT_INSTALL_ONLY: ${{ inputs.install_only }}
+        INPUT_SKIP_PACKAGING: ${{ inputs.skip_packaging }}
+        INPUT_SKIP_EXISTING: ${{ inputs.skip_existing }}
+        INPUT_SKIP_UPLOAD: ${{ inputs.skip_upload }}
+        INPUT_MARK_AS_LATEST: ${{ inputs.mark_as_latest }}
+        INPUT_PACKAGES_WITH_INDEX: ${{ inputs.packages_with_index }}
+        INPUT_PAGES_BRANCH: ${{ inputs.pages_branch }}
+      run: |
+        owner=$(cut -d '/' -f 1 <<< "$GITHUB_REPOSITORY")
+        repo=$(cut -d '/' -f 2 <<< "$GITHUB_REPOSITORY")
+
+        args=(--owner "$owner" --repo "$repo")
+        args+=(--charts-dir "$INPUT_CHARTS_DIR")
+
+        if [[ -n "$INPUT_VERSION" ]]; then
+            args+=(--version "$INPUT_VERSION")
+        fi
+
+        if [[ -n "$INPUT_CONFIG" ]]; then
+            args+=(--config "$INPUT_CONFIG")
+        fi
+
+        if [[ -z "$INPUT_INSTALL_DIR" ]]; then
+          install="$RUNNER_TOOL_CACHE/cr/$INPUT_VERSION/$(uname -m)"
+          safe_install=$(printf '%s' "$install" | tr -d '\n\r')
+          echo "$safe_install" >> "$GITHUB_PATH"
+          args+=(--install-dir "$safe_install")
+        else
+          safe_install_dir=$(printf '%s' "$INPUT_INSTALL_DIR" | tr -d '\n\r')
+          echo "$safe_install_dir" >> "$GITHUB_PATH"
+          args+=(--install-dir "$safe_install_dir")
+        fi
+
+        if [[ -n "$INPUT_INSTALL_ONLY" ]]; then
+            args+=(--install-only "$INPUT_INSTALL_ONLY")
+        fi
+
+        if [[ -n "$INPUT_SKIP_PACKAGING" ]]; then
+            args+=(--skip-packaging "$INPUT_SKIP_PACKAGING")
+        fi
+
+        if [[ -n "$INPUT_SKIP_EXISTING" ]]; then
+            args+=(--skip-existing "$INPUT_SKIP_EXISTING")
+        fi
+
+        if [[ -n "$INPUT_SKIP_UPLOAD" ]]; then
+            args+=(--skip-upload "$INPUT_SKIP_UPLOAD")
+        fi
+
+        if [[ -n "$INPUT_MARK_AS_LATEST" ]]; then
+            args+=(--mark-as-latest "$INPUT_MARK_AS_LATEST")
+        fi
+
+        if [[ -n "$INPUT_PACKAGES_WITH_INDEX" ]]; then
+            args+=(--packages-with-index "$INPUT_PACKAGES_WITH_INDEX")
+        fi
+
+        if [[ -n "$INPUT_PAGES_BRANCH" ]]; then
+            args+=(--pages-branch "$INPUT_PAGES_BRANCH")
+        fi
+
+        "$GITHUB_ACTION_PATH/cr.sh" "${args[@]}"
+
+        if [[ -f changed_charts.txt ]]; then
+            cat changed_charts.txt >> "$GITHUB_OUTPUT"
+        fi
+        if [[ -f chart_version.txt ]]; then
+            cat chart_version.txt >> "$GITHUB_OUTPUT"
+        fi
+        rm -f changed_charts.txt chart_version.txt
+      shell: bash
