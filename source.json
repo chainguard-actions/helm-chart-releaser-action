@@ -2,8 +2,10 @@
   "owner": "helm",
   "repo": "chart-releaser-action",
   "version": "v1.7.0",
+  "commit_sha": "cae68fefc6b5f367a0275617c9f83181ba54714f",
   "url": "https://github.com/helm/chart-releaser-action",
   "policy_sha": "ff50f15e4b79bfbf764dafdfd2579175a6ea9771",
   "test_policy_sha": "843adf9e4b8f85d0c08b27b9d0b09dd094b54702",
+  "test_agent_version": "1",
   "harden_agent_version": "1"
 }

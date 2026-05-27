@@ -8,25 +8,37 @@
 
 **Harden Agent Version:** `1`
 
-Action **helm--chart-releaser-action/v1.7.0** was hardened automatically. 25 finding(s) were identified and resolved across 1 iteration(s).
+Action **helm--chart-releaser-action/v1.7.0** was hardened automatically. 25 finding(s) were identified and resolved across 2 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-The `run:` block in action.yml directly interpolates multiple `${{ inputs.* }}` expressions into shell command strings without first assigning them to environment variables. This allows an attacker who controls input values to inject arbitrary shell commands. Affected expressions include: `${{ inputs.charts_dir }}`, `${{ inputs.version }}`, `${{ inputs.config }}`, `${{ inputs.install_dir }}`, `${{ inputs.install_only }}`, `${{ inputs.skip_packaging }}`, `${{ inputs.skip_existing }}`, `${{ inputs.skip_upload }}`, `${{ inputs.mark_as_latest }}`, `${{ inputs.packages_with_index }}`, and `${{ inputs.pages_branch }}`. All should be passed via `env:` variables and referenced as `$VAR` in the shell.
+Multiple attacker-controlled `inputs.*` expressions are interpolated directly inside the `run:` shell block in action.yml without first being assigned to environment variables. An attacker who controls these inputs can inject arbitrary shell commands. Affected expressions include: `${{ inputs.charts_dir }}`, `${{ inputs.version }}`, `${{ inputs.config }}`, `${{ inputs.install_dir }}`, `${{ inputs.install_only }}`, `${{ inputs.skip_packaging }}`, `${{ inputs.skip_existing }}`, `${{ inputs.skip_upload }}`, `${{ inputs.mark_as_latest }}`, `${{ inputs.packages_with_index }}`, and `${{ inputs.pages_branch }}`. These should be mapped to `env:` variables and referenced as `$VAR_NAME` in the shell script.
 
 Locations:
 
-- `action.yml:67`
+- `action.yml:68`
+- `action.yml:70`
+- `action.yml:74`
+- `action.yml:78`
+- `action.yml:81`
+- `action.yml:82`
+- `action.yml:85`
+- `action.yml:89`
+- `action.yml:93`
+- `action.yml:97`
+- `action.yml:101`
+- `action.yml:105`
+- `action.yml:109`
 
 ### github-env-injection (severity: high)
 
-The `run:` block writes the attacker-controlled value `${{ inputs.install_dir }}` directly to `$GITHUB_PATH` via `echo ${{ inputs.install_dir }} >> "$GITHUB_PATH"` without any sanitization (missing `printf '%s' ... | tr -d '\n\r'` step). A malicious input containing newline characters can inject arbitrary entries into the runner's PATH, enabling path-hijacking attacks on subsequent steps.
+The `run:` block in action.yml writes the attacker-controlled expression `${{ inputs.install_dir }}` directly to `$GITHUB_PATH` without any sanitization (no `printf '%s' ... | tr -d '\n\r'` step). A malicious value containing newlines could inject additional entries into `$GITHUB_PATH`, enabling path-hijacking attacks. The offending line is: `echo ${{ inputs.install_dir }} >> "$GITHUB_PATH"`.
 
 Locations:
 
-- `action.yml:87`
+- `action.yml:82`
 
 ### static-inline-injection (severity: high)
 
@@ -220,5 +232,13 @@ Locations:
 
 **Notes:**
 
-Fixed all findings in action.yml by: (1) Moving all ${{ inputs.* }} expressions (charts_dir, version, config, install_dir, install_only, skip_packaging, skip_existing, skip_upload, mark_as_latest, packages_with_index, pages_branch) from the run: shell block into the step's env: block as INPUT_* variables, then referencing them as plain shell variables in the script. (2) Fixed the github-env-injection by sanitizing both the user-provided INPUT_INSTALL_DIR and the auto-computed install path using 'printf "%s" "$VAR" | tr -d "\n\r"' before writing to $GITHUB_PATH.
+Fixed all script injection findings in action.yml by: (1) Adding an `env:` block to the step that maps all `${{ inputs.* }}` expressions to environment variables (INPUT_CHARTS_DIR, INPUT_VERSION, INPUT_CONFIG, INPUT_INSTALL_DIR, INPUT_INSTALL_ONLY, INPUT_SKIP_PACKAGING, INPUT_SKIP_EXISTING, INPUT_SKIP_UPLOAD, INPUT_MARK_AS_LATEST, INPUT_PACKAGES_WITH_INDEX, INPUT_PAGES_BRANCH); (2) Replacing all `${{ inputs.* }}` references in the `run:` block with the corresponding `$INPUT_*` environment variable references; (3) Fixing the github-env-injection by sanitizing the install_dir value with `printf '%s' "$INPUT_INSTALL_DIR" | tr -d '\n\r'` before writing to $GITHUB_PATH.
+
+### Iteration 2
+
+**Fixes applied:** github-env-injection
+
+**Notes:**
+
+Fixed the unsanitized $INPUT_VERSION usage in the GITHUB_PATH write. When INPUT_INSTALL_DIR is empty, the code now sanitizes INPUT_VERSION with `safe_version=$(printf '%s' "$INPUT_VERSION" | tr -d '\n\r')` before using it to construct the install path, and uses `printf '%s\n'` to write to $GITHUB_PATH. This prevents newline injection attacks via the `inputs.version` parameter, matching the sanitization pattern already applied to the INPUT_INSTALL_DIR branch.
 

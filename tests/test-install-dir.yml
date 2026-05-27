@@ -1,4 +1,4 @@
-name: Test install-only mode
+name: Test custom install_dir
 on:
   workflow_dispatch:
 jobs:
@@ -11,16 +11,19 @@ jobs:
       - name: Prepare tool cache dir
         run: mkdir -p /tmp/runner-tool-cache
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create custom install directory
+        run: mkdir -p /tmp/cr-custom-dir
       - id: action
         uses: .
         with:
           version: v1.7.0
           install_only: "true"
-      - name: Assert cr tool was installed
+          install_dir: /tmp/cr-custom-dir
+      - name: Assert cr tool was installed in custom dir
         run: |
-          if ! command -v cr &>/dev/null; then
-            echo "FAIL: cr binary not found in PATH"
+          if [ ! -f /tmp/cr-custom-dir/cr ]; then
+            echo "FAIL: cr binary not found in /tmp/cr-custom-dir"
             exit 1
           fi
-          echo "PASS: cr is installed"
-          cr version
+          echo "PASS: cr is installed in custom dir"
+          /tmp/cr-custom-dir/cr version

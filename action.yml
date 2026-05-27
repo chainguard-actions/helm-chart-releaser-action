@@ -96,13 +96,13 @@ runs:
         fi
 
         if [[ -z "$INPUT_INSTALL_DIR" ]]; then
-          install="$RUNNER_TOOL_CACHE/cr/$INPUT_VERSION/$(uname -m)"
-          printf '%s' "$install" | tr -d '\n\r' >> "$GITHUB_PATH"
-          printf '\n' >> "$GITHUB_PATH"
+          safe_version=$(printf '%s' "$INPUT_VERSION" | tr -d '\n\r')
+          install="$RUNNER_TOOL_CACHE/cr/$safe_version/$(uname -m)"
+          printf '%s\n' "$install" >> "$GITHUB_PATH"
           args+=(--install-dir "$install")
         else
           safe_install_dir=$(printf '%s' "$INPUT_INSTALL_DIR" | tr -d '\n\r')
-          printf '%s\n' "$safe_install_dir" >> "$GITHUB_PATH"
+          echo "$safe_install_dir" >> "$GITHUB_PATH"
           args+=(--install-dir "$safe_install_dir")
         fi
 

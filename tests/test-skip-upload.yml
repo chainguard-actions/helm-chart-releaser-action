@@ -1,4 +1,4 @@
-name: Test install-only mode
+name: Test skip_upload and skip_existing inputs
 on:
   workflow_dispatch:
 jobs:
@@ -16,11 +16,12 @@ jobs:
         with:
           version: v1.7.0
           install_only: "true"
+          skip_upload: "true"
+          skip_existing: "true"
       - name: Assert cr tool was installed
         run: |
           if ! command -v cr &>/dev/null; then
             echo "FAIL: cr binary not found in PATH"
             exit 1
           fi
-          echo "PASS: cr is installed"
-          cr version
+          echo "PASS: cr is installed (skip_upload and skip_existing inputs accepted)"

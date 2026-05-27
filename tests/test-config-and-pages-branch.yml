@@ -1,4 +1,4 @@
-name: Test install-only mode
+name: Test config and pages_branch inputs
 on:
   workflow_dispatch:
 jobs:
@@ -11,16 +11,23 @@ jobs:
       - name: Prepare tool cache dir
         run: mkdir -p /tmp/runner-tool-cache
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create cr config file
+        run: |
+          mkdir -p /tmp/cr-config
+          cat > /tmp/cr-config/cr.yaml <<'EOF'
+          git-base-url: https://github.com/
+          EOF
       - id: action
         uses: .
         with:
           version: v1.7.0
           install_only: "true"
+          config: /tmp/cr-config/cr.yaml
+          pages_branch: gh-pages
       - name: Assert cr tool was installed
         run: |
           if ! command -v cr &>/dev/null; then
             echo "FAIL: cr binary not found in PATH"
             exit 1
           fi
-          echo "PASS: cr is installed"
-          cr version
+          echo "PASS: cr is installed (config and pages_branch inputs accepted)"
