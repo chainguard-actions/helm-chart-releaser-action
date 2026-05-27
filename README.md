@@ -1,6 +1,6 @@
 # helm/chart-releaser-action
 
-A GitHub Action to turn a GitHub project into a self-hosted Helm chart repo, using helm/chart-releaser CLI tool
+Host a Helm charts repo on GitHub Pages
 
 Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at [https://github.com/helm/chart-releaser-action](https://github.com/helm/chart-releaser-action).
 
