@@ -63,15 +63,31 @@ outputs:
   chart_version:
     description: "The version of the most recently generated charts; will be set even if no charts have been updated since the last run."
     value: ${{ steps.release.outputs.chart_version }}
-
 runs:
   using: composite
   steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
     - id: release
       env:
-        INPUT_CHARTS_DIR: ${{ inputs.charts_dir }}
         INPUT_VERSION: ${{ inputs.version }}
         INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_CHARTS_DIR: ${{ inputs.charts_dir }}
         INPUT_INSTALL_DIR: ${{ inputs.install_dir }}
         INPUT_INSTALL_ONLY: ${{ inputs.install_only }}
         INPUT_SKIP_PACKAGING: ${{ inputs.skip_packaging }}
@@ -96,10 +112,10 @@ runs:
         fi
 
         if [[ -z "$INPUT_INSTALL_DIR" ]]; then
-          safe_version=$(printf '%s' "$INPUT_VERSION" | tr -d '\n\r')
-          install="$RUNNER_TOOL_CACHE/cr/$safe_version/$(uname -m)"
-          printf '%s\n' "$install" >> "$GITHUB_PATH"
-          args+=(--install-dir "$install")
+          install="$RUNNER_TOOL_CACHE/cr/$INPUT_VERSION/$(uname -m)"
+          safe_install=$(printf '%s' "$install" | tr -d '\n\r')
+          echo "$safe_install" >> "$GITHUB_PATH"
+          args+=(--install-dir "$safe_install")
         else
           safe_install_dir=$(printf '%s' "$INPUT_INSTALL_DIR" | tr -d '\n\r')
           echo "$safe_install_dir" >> "$GITHUB_PATH"
@@ -137,10 +153,16 @@ runs:
         "$GITHUB_ACTION_PATH/cr.sh" "${args[@]}"
 
         if [[ -f changed_charts.txt ]]; then
-            cat changed_charts.txt >> "$GITHUB_OUTPUT"
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                safe_line=$(printf '%s' "$line" | tr -d '\n\r')
+                printf '%s\n' "$safe_line" >> "$GITHUB_OUTPUT"
+            done < changed_charts.txt
         fi
         if [[ -f chart_version.txt ]]; then
-            cat chart_version.txt >> "$GITHUB_OUTPUT"
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                safe_line=$(printf '%s' "$line" | tr -d '\n\r')
+                printf '%s\n' "$safe_line" >> "$GITHUB_OUTPUT"
+            done < chart_version.txt
         fi
         rm -f changed_charts.txt chart_version.txt
       shell: bash

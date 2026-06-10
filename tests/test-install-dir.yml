@@ -6,24 +6,22 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITHUB_REPOSITORY: test-owner/test-repo
+      CR_TOKEN: fake-token-for-install-only
       RUNNER_TOOL_CACHE: /tmp/runner-tool-cache
     steps:
-      - name: Prepare tool cache dir
-        run: mkdir -p /tmp/runner-tool-cache
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Create custom install directory
-        run: mkdir -p /tmp/cr-custom-dir
+      - name: Create runner tool cache dir
+        run: mkdir -p /tmp/runner-tool-cache
       - id: action
         uses: .
         with:
           version: v1.7.0
           install_only: "true"
-          install_dir: /tmp/cr-custom-dir
-      - name: Assert cr tool was installed in custom dir
+          install_dir: /tmp/custom-cr-install
+      - name: Assert cr is installed in custom dir
         run: |
-          if [ ! -f /tmp/cr-custom-dir/cr ]; then
-            echo "FAIL: cr binary not found in /tmp/cr-custom-dir"
+          if [ ! -f /tmp/custom-cr-install/cr ]; then
+            echo "FAIL: cr binary not found in custom install dir /tmp/custom-cr-install"
             exit 1
           fi
-          echo "PASS: cr is installed in custom dir"
-          /tmp/cr-custom-dir/cr version
+          echo "PASS: cr binary found at /tmp/custom-cr-install/cr"

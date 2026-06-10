@@ -1,8 +1,10 @@
+<!-- markdownlint-disable -->
+
 # Hardening Report: helm--chart-releaser-action/v1.7.0
 
 > This file was generated automatically by the hardening agent.
 
-**Policy SHA:** `ff50f15e4b79bfbf764dafdfd2579175a6ea9771`
+**Policy SHA:** `d636be7e43ef829af6e853da6b3c7566db9f72fe`
 
 **Test Policy SHA:** `843adf9e4b8f85d0c08b27b9d0b09dd094b54702`
 
@@ -14,31 +16,19 @@ Action **helm--chart-releaser-action/v1.7.0** was hardened automatically. 25 fin
 
 ### script-injection (severity: high)
 
-Multiple attacker-controlled `inputs.*` expressions are interpolated directly inside the `run:` shell block in action.yml without first being assigned to environment variables. An attacker who controls these inputs can inject arbitrary shell commands. Affected expressions include: `${{ inputs.charts_dir }}`, `${{ inputs.version }}`, `${{ inputs.config }}`, `${{ inputs.install_dir }}`, `${{ inputs.install_only }}`, `${{ inputs.skip_packaging }}`, `${{ inputs.skip_existing }}`, `${{ inputs.skip_upload }}`, `${{ inputs.mark_as_latest }}`, `${{ inputs.packages_with_index }}`, and `${{ inputs.pages_branch }}`. These should be mapped to `env:` variables and referenced as `$VAR_NAME` in the shell script.
+The `run:` block in action.yml directly interpolates `${{ inputs.* }}` expressions throughout the shell script (sub-rule a). YAML template substitution occurs before the shell processes the string, so an attacker-controlled input value can inject shell metacharacters and execute arbitrary commands. Affected lines include: `args+=(--charts-dir "${{ inputs.charts_dir }}")`, `if [[ -n "${{ inputs.version }}" ]]`, `args+=(--version "${{ inputs.version }}")`, `if [[ -n "${{ inputs.config }}" ]]`, `args+=(--config "${{ inputs.config }}")`, `if [[ -z "${{ inputs.install_dir }}" ]]`, `install="$RUNNER_TOOL_CACHE/cr/${{ inputs.version }}/$(uname -m)"`, `echo ${{ inputs.install_dir }} >> "$GITHUB_PATH"` (also unquoted — sub-rule b), and all remaining `${{ inputs.install_only }}`, `${{ inputs.skip_packaging }}`, `${{ inputs.skip_existing }}`, `${{ inputs.skip_upload }}`, `${{ inputs.mark_as_latest }}`, `${{ inputs.packages_with_index }}`, `${{ inputs.pages_branch }}` interpolations. All inputs should be passed via an `env:` block and referenced as double-quoted shell variables (e.g., `"$INPUT_VERSION"`).
 
 Locations:
 
-- `action.yml:68`
 - `action.yml:70`
-- `action.yml:74`
-- `action.yml:78`
-- `action.yml:81`
-- `action.yml:82`
-- `action.yml:85`
-- `action.yml:89`
-- `action.yml:93`
-- `action.yml:97`
-- `action.yml:101`
-- `action.yml:105`
-- `action.yml:109`
 
 ### github-env-injection (severity: high)
 
-The `run:` block in action.yml writes the attacker-controlled expression `${{ inputs.install_dir }}` directly to `$GITHUB_PATH` without any sanitization (no `printf '%s' ... | tr -d '\n\r'` step). A malicious value containing newlines could inject additional entries into `$GITHUB_PATH`, enabling path-hijacking attacks. The offending line is: `echo ${{ inputs.install_dir }} >> "$GITHUB_PATH"`.
+The `run:` block writes `${{ inputs.install_dir }}` directly to `$GITHUB_PATH` without quoting or sanitization: `echo ${{ inputs.install_dir }} >> "$GITHUB_PATH"`. This is both unquoted (shell word-splitting/glob expansion) and unsanitized (no `printf '%s' ... | tr -d '\n\r'` step), allowing an attacker to inject newlines into `$GITHUB_PATH` and potentially prepend malicious directories to the runner's PATH. The fix is to route the value through an `env:` variable and apply the sanitization pipeline before writing.
 
 Locations:
 
-- `action.yml:82`
+- `action.yml:87`
 
 ### static-inline-injection (severity: high)
 
@@ -232,7 +222,7 @@ Locations:
 
 **Notes:**
 
-Fixed all script injection findings in action.yml by: (1) Adding an `env:` block to the step that maps all `${{ inputs.* }}` expressions to environment variables (INPUT_CHARTS_DIR, INPUT_VERSION, INPUT_CONFIG, INPUT_INSTALL_DIR, INPUT_INSTALL_ONLY, INPUT_SKIP_PACKAGING, INPUT_SKIP_EXISTING, INPUT_SKIP_UPLOAD, INPUT_MARK_AS_LATEST, INPUT_PACKAGES_WITH_INDEX, INPUT_PAGES_BRANCH); (2) Replacing all `${{ inputs.* }}` references in the `run:` block with the corresponding `$INPUT_*` environment variable references; (3) Fixing the github-env-injection by sanitizing the install_dir value with `printf '%s' "$INPUT_INSTALL_DIR" | tr -d '\n\r'` before writing to $GITHUB_PATH.
+Fixed all 25 findings in action.yml by: (1) Adding an env: block to the release step that maps all 11 inputs to named environment variables (INPUT_VERSION, INPUT_CONFIG, INPUT_CHARTS_DIR, INPUT_INSTALL_DIR, INPUT_INSTALL_ONLY, INPUT_SKIP_PACKAGING, INPUT_SKIP_EXISTING, INPUT_SKIP_UPLOAD, INPUT_MARK_AS_LATEST, INPUT_PACKAGES_WITH_INDEX, INPUT_PAGES_BRANCH). (2) Replacing all ${{ inputs.* }} inline expressions in the run: block with the corresponding $INPUT_* shell variables. (3) Sanitizing the GITHUB_PATH write for install_dir by using `safe_install_dir=$(printf '%s' "$INPUT_INSTALL_DIR" | tr -d '\n\r')` before writing to $GITHUB_PATH, preventing newline injection attacks.
 
 ### Iteration 2
 
@@ -240,5 +230,8 @@ Fixed all script injection findings in action.yml by: (1) Adding an `env:` block
 
 **Notes:**
 
-Fixed the unsanitized $INPUT_VERSION usage in the GITHUB_PATH write. When INPUT_INSTALL_DIR is empty, the code now sanitizes INPUT_VERSION with `safe_version=$(printf '%s' "$INPUT_VERSION" | tr -d '\n\r')` before using it to construct the install path, and uses `printf '%s\n'` to write to $GITHUB_PATH. This prevents newline injection attacks via the `inputs.version` parameter, matching the sanitization pattern already applied to the INPUT_INSTALL_DIR branch.
+Fixed three github-env-injection vulnerabilities in action.yml:
+1. GITHUB_PATH injection (line 83): The `install` variable (containing user-controlled `$INPUT_VERSION`) is now sanitized with `printf '%s' "$install" | tr -d '\n\r'` before being written to $GITHUB_PATH, matching the existing sanitization pattern used in the INPUT_INSTALL_DIR branch.
+2. GITHUB_OUTPUT injection via changed_charts.txt (line 113): Replaced bare `cat changed_charts.txt >> "$GITHUB_OUTPUT"` with a while-read loop that sanitizes each line using `printf '%s' "$line" | tr -d '\n\r'` before writing.
+3. GITHUB_OUTPUT injection via chart_version.txt (line 117): Applied the same sanitizing while-read loop pattern to chart_version.txt.
 
