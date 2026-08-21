@@ -1,0 +1,33 @@
+name: Test skip_existing input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up RUNNER_TOOL_CACHE
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE"
+          echo "RUNNER_TOOL_CACHE=$RUNNER_TOOL_CACHE" >> "$GITHUB_ENV"
+
+      - id: action
+        uses: .
+        with:
+          version: v1.7.0
+          install_only: "true"
+          install_dir: /tmp/cr-skip-existing-install
+          skip_existing: "true"
+        env:
+          CR_TOKEN: ${{ github.token }}
+
+      - name: Assert cr binary was installed
+        run: |
+          echo "Checking for cr binary in /tmp/cr-skip-existing-install..."
+          if [ ! -f "/tmp/cr-skip-existing-install/cr" ]; then
+            echo "FAIL: cr binary not found at /tmp/cr-skip-existing-install/cr"
+            ls -la /tmp/cr-skip-existing-install/ 2>/dev/null || echo "(directory does not exist)"
+            exit 1
+          fi
+          echo "PASS: cr binary found (skip_existing input accepted)"

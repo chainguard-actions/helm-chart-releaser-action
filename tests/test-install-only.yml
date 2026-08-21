@@ -4,23 +4,40 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      GITHUB_REPOSITORY: test-owner/test-repo
-      CR_TOKEN: fake-token-for-install-only
-      RUNNER_TOOL_CACHE: /tmp/runner-tool-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Create runner tool cache dir
-        run: mkdir -p /tmp/runner-tool-cache
+
+      - name: Set up RUNNER_TOOL_CACHE
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE"
+          echo "RUNNER_TOOL_CACHE=$RUNNER_TOOL_CACHE" >> "$GITHUB_ENV"
+
       - id: action
         uses: .
         with:
           version: v1.7.0
           install_only: "true"
-      - name: Assert cr is installed
+          install_dir: /tmp/cr-test-install
+        env:
+          CR_TOKEN: ${{ github.token }}
+
+      - name: Assert cr binary was installed
         run: |
-          if ! command -v cr &>/dev/null; then
-            echo "FAIL: cr binary not found in PATH"
+          echo "Checking for cr binary in /tmp/cr-test-install..."
+          if [ ! -f "/tmp/cr-test-install/cr" ]; then
+            echo "FAIL: cr binary not found at /tmp/cr-test-install/cr"
+            ls -la /tmp/cr-test-install/ 2>/dev/null || echo "(directory does not exist)"
             exit 1
           fi
-          echo "PASS: cr binary found at $(command -v cr)"
+          echo "PASS: cr binary found"
+
+      - name: Assert cr binary is executable and works
+        run: |
+          echo "Checking cr binary is executable..."
+          if [ ! -x "/tmp/cr-test-install/cr" ]; then
+            echo "FAIL: cr binary is not executable"
+            exit 1
+          fi
+          echo "Running cr version..."
+          /tmp/cr-test-install/cr version
+          echo "PASS: cr binary is functional"

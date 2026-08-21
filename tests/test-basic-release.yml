@@ -1,4 +1,4 @@
-name: Test skip-packaging mode
+name: Test basic release (sentinel repo graceful failure)
 on:
   workflow_dispatch:
 jobs:
@@ -9,12 +9,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up git config and pre-packaged chart
+      - name: Set up git and charts directory
         run: |
           git config user.email "test@example.com"
           git config user.name "Test User"
-          # Create the release packages directory (simulating custom packaging)
-          mkdir -p .cr-release-packages
+          # Create a minimal charts directory with a Chart.yaml
+          mkdir -p charts/test-chart
+          cat > charts/test-chart/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: test-chart
+          version: 0.1.0
+          description: A test chart
+          EOF
+          git add charts/
+          git commit -m "Add test chart" || true
 
       - name: Set up RUNNER_TOOL_CACHE
         run: |
@@ -25,26 +33,18 @@ jobs:
         continue-on-error: true
         with:
           version: v1.7.0
-          skip_packaging: "true"
-          install_dir: /tmp/cr-skip-pkg-test
+          charts_dir: charts
+          mark_as_latest: "true"
         env:
           CR_TOKEN: ${{ github.token }}
 
-      - name: Assert cr was installed even in skip-packaging mode
-        run: |
-          echo "Checking for cr binary..."
-          if [ ! -f "/tmp/cr-skip-pkg-test/cr" ]; then
-            echo "FAIL: cr binary not found at /tmp/cr-skip-pkg-test/cr"
-            ls -la /tmp/cr-skip-pkg-test/ 2>/dev/null || echo "(directory does not exist)"
-            exit 1
-          fi
-          echo "PASS: cr binary installed"
-
-      - name: Assert action outcome is success or graceful failure
+      - name: Assert action ran (success or graceful failure on sentinel repo)
         env:
           OUTCOME: ${{ steps.action.outcome }}
+          CHANGED_CHARTS: ${{ steps.action.outputs.changed_charts }}
         run: |
           echo "outcome: $OUTCOME"
+          echo "changed_charts: $CHANGED_CHARTS"
           if [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then

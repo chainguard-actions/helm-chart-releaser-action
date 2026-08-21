@@ -1,0 +1,33 @@
+name: Test pages_branch input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up RUNNER_TOOL_CACHE
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE"
+          echo "RUNNER_TOOL_CACHE=$RUNNER_TOOL_CACHE" >> "$GITHUB_ENV"
+
+      - id: action
+        uses: .
+        with:
+          version: v1.7.0
+          install_only: "true"
+          install_dir: /tmp/cr-pages-branch-install
+          pages_branch: gh-pages
+        env:
+          CR_TOKEN: ${{ github.token }}
+
+      - name: Assert cr binary was installed
+        run: |
+          echo "Checking for cr binary in /tmp/cr-pages-branch-install..."
+          if [ ! -f "/tmp/cr-pages-branch-install/cr" ]; then
+            echo "FAIL: cr binary not found at /tmp/cr-pages-branch-install/cr"
+            ls -la /tmp/cr-pages-branch-install/ 2>/dev/null || echo "(directory does not exist)"
+            exit 1
+          fi
+          echo "PASS: cr binary found (pages_branch input accepted)"

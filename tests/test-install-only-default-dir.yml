@@ -1,0 +1,44 @@
+name: Test install-only with default install dir
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up RUNNER_TOOL_CACHE
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE"
+
+      - id: action
+        uses: .
+        with:
+          version: v1.7.0
+          install_only: "true"
+        env:
+          CR_TOKEN: ${{ github.token }}
+
+      - name: Assert cr binary was installed in default location
+        run: |
+          ARCH=$(uname -m)
+          EXPECTED_DIR="$RUNNER_TOOL_CACHE/cr/v1.7.0/$ARCH"
+          echo "Expected install dir: $EXPECTED_DIR"
+          if [ ! -f "$EXPECTED_DIR/cr" ]; then
+            echo "FAIL: cr binary not found at $EXPECTED_DIR/cr"
+            ls -la "$EXPECTED_DIR/" 2>/dev/null || echo "(directory does not exist)"
+            exit 1
+          fi
+          echo "PASS: cr binary found at default location"
+
+      - name: Assert cr is on PATH and functional
+        run: |
+          echo "Checking cr is on PATH..."
+          if ! command -v cr >/dev/null 2>&1; then
+            echo "FAIL: cr not found on PATH"
+            echo "PATH=$PATH"
+            exit 1
+          fi
+          echo "cr version:"
+          cr version
+          echo "PASS: cr is on PATH and functional"
