@@ -1,0 +1,198 @@
+# Copyright The Helm Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: "Helm Chart Releaser"
+description: "Host a Helm charts repo on GitHub Pages"
+author: "The Helm authors"
+branding:
+  color: blue
+  icon: anchor
+inputs:
+  version:
+    description: "The chart-releaser version to use (default: v1.9.0)"
+    required: false
+    default: v1.9.0
+  config:
+    description: "The relative path to the chart-releaser config file"
+    required: false
+  charts_dir:
+    description: The charts directory
+    required: false
+    default: charts
+  install_dir:
+    description: "Where to install the cr tool"
+    required: false
+  install_only:
+    description: "Just install cr tool"
+    required: false
+  skip_packaging:
+    description: "Skip the packaging option (do your custom packaging before running this action)"
+    required: false
+  skip_existing:
+    description: "Skip package upload if release exists"
+    required: false
+  skip_upload:
+    description: "Skip package upload"
+    required: false
+  mark_as_latest:
+    description: Mark the created GitHub release as 'latest'
+    required: false
+    default: "true"
+  match_tags:
+    description: "The glob to use to filter Git tags (default: all tags)"
+    required: false
+  packages_with_index:
+    description: "Upload chart packages directly into publishing branch"
+    required: false
+    default: "false"
+  pages_branch:
+    description: "Name of the branch to be used to push the index and artifacts. (default to: gh-pages but it is not set in the action it is a default value for the chart-releaser binary)"
+    required: false
+  oci_registry_url:
+    description: "OCI registry URL (e.g. oci://ghcr.io/myorg/charts). When set, chart packages are pushed to this OCI registry using 'cr push'."
+    required: false
+  oci_username:
+    description: "Username for OCI registry authentication. Falls back to the local registry credential store (e.g. ~/.docker/config.json populated by helm/docker login) when unset."
+    required: false
+  oci_password:
+    description: "Password or token for OCI registry authentication. Falls back to the local registry credential store when unset."
+    required: false
+outputs:
+  changed_charts:
+    description: "A comma-separated list of charts that were released on this run. Will be an empty string if no updates were detected, will be unset if `--skip_packaging` is used: in the latter case your custom packaging step is responsible for setting its own outputs if you need them."
+    value: ${{ steps.release.outputs.changed_charts }}
+  chart_version:
+    description: "The version of the most recently generated charts; will be set even if no charts have been updated since the last run."
+    value: ${{ steps.release.outputs.chart_version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    - id: release
+      env:
+        charts_dir: ${{ inputs.charts_dir }}
+        config: ${{ inputs.config }}
+        install_dir: ${{ inputs.install_dir }}
+        install_only: ${{ inputs.install_only }}
+        mark_as_latest: ${{ inputs.mark_as_latest }}
+        match_tags: ${{ inputs.match_tags }}
+        oci_registry_url: ${{ inputs.oci_registry_url }}
+        oci_username: ${{ inputs.oci_username }}
+        oci_password: ${{ inputs.oci_password }}
+        packages_with_index: ${{ inputs.packages_with_index }}
+        pages_branch: ${{ inputs.pages_branch }}
+        skip_existing: ${{ inputs.skip_existing }}
+        skip_packaging: ${{ inputs.skip_packaging }}
+        skip_upload: ${{ inputs.skip_upload }}
+        version: ${{ inputs.version }}
+      run: |
+        owner=$(cut -d '/' -f 1 <<< "$GITHUB_REPOSITORY")
+        repo=$(cut -d '/' -f 2 <<< "$GITHUB_REPOSITORY")
+
+        args=(--owner "$owner" --repo "$repo")
+        args+=(--charts-dir "$charts_dir")
+
+        if [[ -n "$version" ]]; then
+            args+=(--version "$version")
+        fi
+
+        if [[ -n "$config" ]]; then
+            args+=(--config "$config")
+        fi
+
+        if [[ -z "$install_dir" ]]; then
+          install="$RUNNER_TOOL_CACHE/cr/$version/$(uname -m)"
+          safe_path=$(printf '%s' "$install" | tr -d '\n\r')
+          printf '%s\n' "$safe_path" >> "$GITHUB_PATH"
+          args+=(--install-dir "$install")
+        else
+          safe_path=$(printf '%s' "$install_dir" | tr -d '\n\r')
+          printf '%s\n' "$safe_path" >> "$GITHUB_PATH"
+          args+=(--install-dir "$install_dir")
+        fi
+
+        if [[ -n "$install_only" ]]; then
+            args+=(--install-only "$install_only")
+        fi
+
+        if [[ -n "$skip_packaging" ]]; then
+            args+=(--skip-packaging "$skip_packaging")
+        fi
+
+        if [[ -n "$skip_existing" ]]; then
+            args+=(--skip-existing "$skip_existing")
+        fi
+
+        if [[ -n "$skip_upload" ]]; then
+            args+=(--skip-upload "$skip_upload")
+        fi
+
+        if [[ -n "$mark_as_latest" ]]; then
+            args+=(--mark-as-latest "$mark_as_latest")
+        fi
+
+        if [[ -n "$match_tags" ]]; then
+            args+=(--match-tags "$match_tags")
+        fi
+
+        if [[ -n "$packages_with_index" ]]; then
+            args+=(--packages-with-index "$packages_with_index")
+        fi
+
+        if [[ -n "$pages_branch" ]]; then
+            args+=(--pages-branch "$pages_branch")
+        fi
+
+        if [[ -n "$oci_registry_url" ]]; then
+            args+=(--oci-registry-url "$oci_registry_url")
+        fi
+
+        if [[ -n "$oci_username" ]]; then
+            args+=(--oci-username "$oci_username")
+        fi
+
+        if [[ -n "$oci_password" ]]; then
+            args+=(--oci-password "$oci_password")
+        fi
+
+        if [ "$RUNNER_ARCH" == "ARM64" ]; then
+            args+=(--use-arm "true")
+        fi
+        "$GITHUB_ACTION_PATH/cr.sh" "${args[@]}"
+
+        if [[ -f changed_charts.txt ]]; then
+            cat changed_charts.txt >> "$GITHUB_OUTPUT"
+        fi
+        if [[ -f chart_version.txt ]]; then
+            cat chart_version.txt >> "$GITHUB_OUTPUT"
+        fi
+        rm -f changed_charts.txt chart_version.txt
+      shell: bash

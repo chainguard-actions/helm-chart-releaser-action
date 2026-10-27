@@ -1,0 +1,33 @@
+name: Test install_only with default install dir and explicit version
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Ensure tool cache exists
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE" 2>/dev/null || sudo mkdir -p "$RUNNER_TOOL_CACHE"
+          echo "RUNNER_TOOL_CACHE=$RUNNER_TOOL_CACHE"
+      - id: action
+        uses: .
+        with:
+          install_only: "true"
+          version: v1.8.1
+      - name: Assert cr installed into tool cache
+        run: |
+          DIR="$RUNNER_TOOL_CACHE/cr/v1.8.1/$(uname -m)"
+          echo "expected dir: $DIR"
+          ls -la "$DIR" || true
+          if [ ! -x "$DIR/cr" ]; then
+            echo "FAIL: $DIR/cr not found"
+            exit 1
+          fi
+          OUT="$(cr version 2>&1)"
+          echo "$OUT"
+          if ! echo "$OUT" | grep -q "1.8.1"; then
+            echo "FAIL: expected cr version 1.8.1 on PATH"
+            exit 1
+          fi
+          echo "PASS"

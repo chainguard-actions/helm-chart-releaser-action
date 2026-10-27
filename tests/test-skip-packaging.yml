@@ -1,0 +1,55 @@
+name: Test skip_packaging path (with skip_existing and pages_branch)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Ensure tool cache exists and prepare empty package dir
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE" 2>/dev/null || sudo mkdir -p "$RUNNER_TOOL_CACHE"
+          rm -rf .cr-index
+          mkdir -p .cr-release-packages
+      - id: action
+        uses: .
+        continue-on-error: true
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          skip_packaging: "true"
+          skip_existing: "true"
+          skip_upload: "true"
+          pages_branch: act-pages
+      - name: Assert cr installed and skip_packaging branch taken
+        run: |
+          CR_BIN="$RUNNER_TOOL_CACHE/cr/v1.9.0/$(uname -m)/cr"
+          echo "checking $CR_BIN"
+          if [ ! -x "$CR_BIN" ]; then
+            echo "FAIL: cr binary not installed at $CR_BIN"
+            exit 1
+          fi
+          if [ ! -d .cr-index ]; then
+            echo "FAIL: .cr-index not created by skip_packaging branch"
+            exit 1
+          fi
+          echo "PASS"
+      - name: Assert outputs unset with skip_packaging
+        env:
+          CHANGED: ${{ steps.action.outputs.changed_charts }}
+          VERSION: ${{ steps.action.outputs.chart_version }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "changed_charts: '$CHANGED' chart_version: '$VERSION'"
+          if [ "$OUTCOME" != "success" ] && [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+          if [ -n "$CHANGED" ] || [ -n "$VERSION" ]; then
+            echo "FAIL: outputs should be unset when skip_packaging is used"
+            exit 1
+          fi
+          echo "PASS"

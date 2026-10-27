@@ -1,0 +1,79 @@
+name: Test match_tags filters the base tag used for change detection
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Ensure tool cache exists
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE" 2>/dev/null || sudo mkdir -p "$RUNNER_TOOL_CACHE"
+      - name: Create tagged history
+        run: |
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          # Matching tag BEFORE the chart is added
+          git tag -f acttest-base
+          mkdir -p act-mt-charts/mtchart/templates
+          cat > act-mt-charts/mtchart/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: mtchart
+          description: Test chart
+          type: application
+          version: 0.2.0
+          appVersion: "1.0.0"
+          EOF
+          cat > act-mt-charts/mtchart/templates/cm.yaml <<'EOF'
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: test
+          data:
+            k: v
+          EOF
+          git add act-mt-charts
+          git commit -m "add mt chart"
+          # Non-matching tag AFTER the chart; without the filter it would hide the change
+          git tag -f othertag-later
+          echo "unrelated" > act-mt-unrelated.txt
+          git add act-mt-unrelated.txt
+          git commit -m "unrelated change"
+      - id: action
+        uses: .
+        continue-on-error: true
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          charts_dir: act-mt-charts
+          match_tags: "acttest-*"
+          skip_upload: "true"
+      - name: Assert chart was packaged (change detected against matching tag)
+        run: |
+          ls -la .cr-release-packages || true
+          if [ ! -f .cr-release-packages/mtchart-0.2.0.tgz ]; then
+            echo "FAIL: expected .cr-release-packages/mtchart-0.2.0.tgz; match_tags filter not applied"
+            exit 1
+          fi
+          echo "PASS: chart packaged"
+      - name: Assert outcome
+        env:
+          CHANGED: ${{ steps.action.outputs.changed_charts }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "changed_charts: $CHANGED"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ "$CHANGED" != "act-mt-charts/mtchart" ]; then
+              echo "FAIL: expected changed_charts 'act-mt-charts/mtchart'"
+              exit 1
+            fi
+            echo "PASS: got '$CHANGED'"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: failed gracefully at release upload (sentinel repo)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

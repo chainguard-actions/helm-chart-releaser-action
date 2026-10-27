@@ -1,0 +1,71 @@
+name: Test changed chart is detected and packaged
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Ensure tool cache exists
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE" 2>/dev/null || sudo mkdir -p "$RUNNER_TOOL_CACHE"
+      - name: Create and commit a chart
+        run: |
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          mkdir -p act-test-charts/mychart/templates
+          cat > act-test-charts/mychart/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: mychart
+          description: Test chart
+          type: application
+          version: 0.1.0
+          appVersion: "1.0.0"
+          EOF
+          cat > act-test-charts/mychart/templates/cm.yaml <<'EOF'
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: test
+          data:
+            k: v
+          EOF
+          git add act-test-charts
+          git commit -m "add test chart"
+      - id: action
+        uses: .
+        continue-on-error: true
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          charts_dir: act-test-charts
+          skip_upload: "true"
+      - name: Assert chart was packaged
+        run: |
+          ls -la .cr-release-packages || true
+          if [ ! -f .cr-release-packages/mychart-0.1.0.tgz ]; then
+            echo "FAIL: expected packaged chart .cr-release-packages/mychart-0.1.0.tgz"
+            exit 1
+          fi
+          echo "PASS: chart packaged"
+      - name: Assert outcome (release upload cannot succeed on sentinel repo)
+        env:
+          CHANGED: ${{ steps.action.outputs.changed_charts }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "changed_charts: $CHANGED"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ "$CHANGED" != "act-test-charts/mychart" ]; then
+              echo "FAIL: expected changed_charts 'act-test-charts/mychart'"
+              exit 1
+            fi
+            echo "PASS: got '$CHANGED'"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully at release upload (sentinel repo is not resolvable)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

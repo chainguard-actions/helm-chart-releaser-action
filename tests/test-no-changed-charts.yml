@@ -1,0 +1,42 @@
+name: Test no chart changes detected
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Ensure tool cache exists
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE" 2>/dev/null || sudo mkdir -p "$RUNNER_TOOL_CACHE"
+      - id: action
+        uses: .
+        env:
+          CR_TOKEN: dummy-token-not-used
+        with:
+          charts_dir: nonexistent-charts-dir-for-test
+      - name: Assert outputs are empty
+        env:
+          CHANGED: ${{ steps.action.outputs.changed_charts }}
+          VERSION: ${{ steps.action.outputs.chart_version }}
+        run: |
+          echo "changed_charts: '$CHANGED'"
+          echo "chart_version: '$VERSION'"
+          if [ -n "$CHANGED" ]; then
+            echo "FAIL: expected empty changed_charts"
+            exit 1
+          fi
+          if [ -n "$VERSION" ]; then
+            echo "FAIL: expected empty chart_version"
+            exit 1
+          fi
+          echo "PASS"
+      - name: Assert temp output files were cleaned up
+        run: |
+          if [ -f changed_charts.txt ] || [ -f chart_version.txt ]; then
+            echo "FAIL: temp files left behind"
+            exit 1
+          fi
+          echo "PASS"

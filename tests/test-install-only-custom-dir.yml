@@ -1,0 +1,39 @@
+name: Test install_only with custom install_dir
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Ensure tool cache exists
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE" 2>/dev/null || sudo mkdir -p "$RUNNER_TOOL_CACHE"
+          echo "RUNNER_TOOL_CACHE=$RUNNER_TOOL_CACHE"
+      - id: action
+        uses: .
+        with:
+          install_only: "true"
+          install_dir: /tmp/cr-custom-bin
+      - name: Assert cr binary installed in custom dir
+        run: |
+          ls -la /tmp/cr-custom-bin || true
+          if [ ! -x /tmp/cr-custom-bin/cr ]; then
+            echo "FAIL: /tmp/cr-custom-bin/cr not found or not executable"
+            exit 1
+          fi
+          echo "PASS: cr installed"
+      - name: Assert cr is on PATH and reports version
+        run: |
+          which cr
+          if [ "$(command -v cr)" != "/tmp/cr-custom-bin/cr" ]; then
+            echo "FAIL: cr on PATH is not the custom install"
+            exit 1
+          fi
+          OUT="$(cr version 2>&1)"
+          echo "$OUT"
+          if ! echo "$OUT" | grep -q "1.9.0"; then
+            echo "FAIL: expected cr version 1.9.0"
+            exit 1
+          fi
+          echo "PASS"

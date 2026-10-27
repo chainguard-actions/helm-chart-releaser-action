@@ -1,0 +1,37 @@
+name: Test OCI inputs accepted when no charts changed
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Ensure tool cache exists
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE" 2>/dev/null || sudo mkdir -p "$RUNNER_TOOL_CACHE"
+      - id: action
+        uses: .
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          charts_dir: act-nonexistent-oci-charts
+          oci_registry_url: oci://ghcr.io/example/charts
+          oci_username: example-user
+          oci_password: example-password
+      - name: Assert no charts released
+        env:
+          CHANGED: ${{ steps.action.outputs.changed_charts }}
+          VERSION: ${{ steps.action.outputs.chart_version }}
+        run: |
+          echo "changed_charts: '$CHANGED' chart_version: '$VERSION'"
+          if [ -n "$CHANGED" ]; then
+            echo "FAIL: expected empty changed_charts"
+            exit 1
+          fi
+          if [ -n "$VERSION" ]; then
+            echo "FAIL: expected empty chart_version"
+            exit 1
+          fi
+          echo "PASS"

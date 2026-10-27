@@ -1,0 +1,75 @@
+name: Test packaging with a chart-releaser config file
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Ensure tool cache exists
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE" 2>/dev/null || sudo mkdir -p "$RUNNER_TOOL_CACHE"
+      - name: Create config and commit a chart
+        run: |
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          cat > act-cr-config.yaml <<'EOF'
+          sign: false
+          EOF
+          mkdir -p act-cfg-charts/cfgchart/templates
+          cat > act-cfg-charts/cfgchart/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: cfgchart
+          description: Test chart
+          type: application
+          version: 0.3.0
+          appVersion: "1.0.0"
+          EOF
+          cat > act-cfg-charts/cfgchart/templates/cm.yaml <<'EOF'
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: test
+          data:
+            k: v
+          EOF
+          git add act-cfg-charts act-cr-config.yaml
+          git commit -m "add cfg chart"
+      - id: action
+        uses: .
+        continue-on-error: true
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          charts_dir: act-cfg-charts
+          config: act-cr-config.yaml
+          skip_upload: "true"
+      - name: Assert chart was packaged using config
+        run: |
+          ls -la .cr-release-packages || true
+          if [ ! -f .cr-release-packages/cfgchart-0.3.0.tgz ]; then
+            echo "FAIL: expected .cr-release-packages/cfgchart-0.3.0.tgz"
+            exit 1
+          fi
+          echo "PASS: chart packaged with config"
+      - name: Assert outcome
+        env:
+          CHANGED: ${{ steps.action.outputs.changed_charts }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "changed_charts: $CHANGED"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ "$CHANGED" != "act-cfg-charts/cfgchart" ]; then
+              echo "FAIL: expected changed_charts 'act-cfg-charts/cfgchart'"
+              exit 1
+            fi
+            echo "PASS: got '$CHANGED'"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: failed gracefully at release upload (sentinel repo)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
