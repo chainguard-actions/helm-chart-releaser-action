@@ -1,0 +1,51 @@
+name: Test config file with explicit chart packaging
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      # Packaging with --config happens locally; 'cr upload' then targets the
+      # sentinel GITHUB_REPOSITORY, which does not exist, so the step may fail
+      # at the upload stage under the harness.
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          charts: tests/fixtures/charts/mychart
+          config: tests/fixtures/cr-config.yaml
+          skip_upload: "true"
+          install_dir: ${{ runner.temp }}/cr-config
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Assert chart was packaged using config
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          CHANGED: ${{ steps.action.outputs.changed_charts }}
+          VERSION: ${{ steps.action.outputs.chart_version }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "changed_charts: '$CHANGED'"
+          echo "chart_version: '$VERSION'"
+          ls -la .cr-release-packages || true
+          if [ ! -f .cr-release-packages/mychart-0.1.0.tgz ]; then
+            echo "FAIL: expected packaged chart .cr-release-packages/mychart-0.1.0.tgz"
+            exit 1
+          fi
+          if [ "$OUTCOME" = "success" ]; then
+            if [ "$CHANGED" != "tests/fixtures/charts/mychart" ]; then
+              echo "FAIL: unexpected changed_charts '$CHANGED'"
+              exit 1
+            fi
+            if [ "$VERSION" != "mychart-0.1.0" ]; then
+              echo "FAIL: unexpected chart_version '$VERSION'"
+              exit 1
+            fi
+            echo "PASS: released and outputs correct"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: packaged with config; upload failed gracefully (sentinel repo)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

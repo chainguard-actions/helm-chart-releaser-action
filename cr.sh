@@ -1,0 +1,556 @@
+#!/usr/bin/env bash
+
+# Copyright The Helm Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+DEFAULT_CHART_RELEASER_VERSION=v1.10.0
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") <options>
+
+    -h, --help                    Display help
+    -v, --version                 The chart-releaser version to use (default: $DEFAULT_CHART_RELEASER_VERSION)"
+        --config                  The path to the chart-releaser config file
+    -d, --charts-dir              The charts directory (default: charts)
+        --charts                  Newline-separated chart directories to process without Git change detection
+    -o, --owner                   The repo owner
+    -r, --repo                    The repo name
+        --pages-branch            The repo pages branch
+    -n, --install-dir             The Path to install the cr tool
+    -i, --install-only            Just install the cr tool
+    -s, --skip-packaging          Skip the packaging step (run your own packaging before using the releaser)
+        --skip-existing           Skip package upload if release exists
+        --skip-upload             Skip package upload, just create the release. Not needed in case of OCI upload.
+    -l, --mark-as-latest          Mark the created GitHub release as 'latest' (default: true)
+    -m, --match-tags              The glob to use to filter Git tags (default: all tags)
+        --packages-with-index     Upload chart packages directly into publishing branch
+        --oci-registry-url        OCI registry URL (e.g. oci://ghcr.io/myorg/charts). When set, packages are pushed via 'cr push'.
+        --oci-username            Username for OCI registry authentication (falls back to local registry credential store)
+        --oci-password            Password/token for OCI registry authentication (falls back to local registry credential store)
+        --use-arm                 Use ARM64 binary (default: false)
+EOF
+}
+
+main() {
+  local version="$DEFAULT_CHART_RELEASER_VERSION"
+  local config=
+  local charts_dir=charts
+  local charts=
+  local owner=
+  local repo=
+  local match_tags=
+  local install_dir=
+  local install_only=
+  local skip_packaging=
+  local skip_existing=
+  local skip_upload=
+  local mark_as_latest=true
+  local packages_with_index=false
+  local pages_branch=
+  local oci_registry_url=
+  local oci_username=
+  local oci_password=
+  local use_arm=false
+
+  parse_command_line "$@"
+
+  if [[ -n "$charts" && -n "$skip_packaging" ]]; then
+    echo "ERROR: '--charts' cannot be combined with '--skip-packaging'." >&2
+    exit 1
+  fi
+
+  : "${CR_TOKEN:?Environment variable CR_TOKEN must be set}"
+
+  local repo_root
+  repo_root=$(git rev-parse --show-toplevel)
+  pushd "$repo_root" >/dev/null
+
+  if [[ -z "$skip_packaging" ]]; then
+    local latest_tag=
+    local changed_charts=()
+    if [[ -n "$charts" ]]; then
+      echo 'Processing explicitly selected charts...'
+      local selected_charts
+      selected_charts=$(lookup_selected_charts "$charts")
+      readarray -t changed_charts <<<"$selected_charts"
+    else
+      echo 'Looking up latest tag...'
+      latest_tag=$(lookup_latest_tag)
+
+      echo "Discovering changed charts since '$latest_tag'..."
+      readarray -t changed_charts <<<"$(lookup_changed_charts "$latest_tag")"
+    fi
+
+    if [[ -n "${changed_charts[*]}" ]]; then
+      install_chart_releaser
+
+      rm -rf .cr-release-packages
+      mkdir -p .cr-release-packages
+
+      rm -rf .cr-index
+      mkdir -p .cr-index
+
+      local packaged_chart_versions=()
+      for chart in "${changed_charts[@]}"; do
+        if [[ -d "$chart" ]]; then
+          package_chart "$chart" || return 1
+        else
+          echo "Nothing to do. No chart changes detected."
+        fi
+      done
+
+      local chart_versions
+      chart_versions=$(
+        IFS=,
+        echo "${packaged_chart_versions[*]}"
+      )
+
+      release_charts
+      push_charts
+      update_index
+      echo "changed_charts=$(
+        IFS=,
+        echo "${changed_charts[*]}"
+      )" >changed_charts.txt
+
+      echo "chart_version=$chart_versions" >chart_version.txt
+    else
+      echo "Nothing to do. No chart changes detected."
+      echo "changed_charts=" >changed_charts.txt
+      echo "chart_version=" >chart_version.txt
+    fi
+  else
+    install_chart_releaser
+    rm -rf .cr-index
+    mkdir -p .cr-index
+    release_charts
+    push_charts
+    update_index
+  fi
+
+  popd >/dev/null
+}
+
+parse_command_line() {
+  while :; do
+    case "${1:-}" in
+    -h | --help)
+      show_help
+      exit
+      ;;
+    --config)
+      if [[ -n "${2:-}" ]]; then
+        config="$2"
+        shift
+      else
+        echo "ERROR: '--config' cannot be empty." >&2
+        show_help
+        exit 1
+      fi
+      ;;
+    -v | --version)
+      if [[ -n "${2:-}" ]]; then
+        version="$2"
+        shift
+      else
+        echo "ERROR: '-v|--version' cannot be empty." >&2
+        show_help
+        exit 1
+      fi
+      ;;
+    --charts)
+      if [[ -n "${2:-}" ]]; then
+        charts="$2"
+        shift
+      else
+        echo "ERROR: '--charts' cannot be empty." >&2
+        show_help
+        exit 1
+      fi
+      ;;
+    -d | --charts-dir)
+      if [[ -n "${2:-}" ]]; then
+        charts_dir="$2"
+        shift
+      else
+        echo "ERROR: '-d|--charts-dir' cannot be empty." >&2
+        show_help
+        exit 1
+      fi
+      ;;
+    -o | --owner)
+      if [[ -n "${2:-}" ]]; then
+        owner="$2"
+        shift
+      else
+        echo "ERROR: '--owner' cannot be empty." >&2
+        show_help
+        exit 1
+      fi
+      ;;
+    -r | --repo)
+      if [[ -n "${2:-}" ]]; then
+        repo="$2"
+        shift
+      else
+        echo "ERROR: '--repo' cannot be empty." >&2
+        show_help
+        exit 1
+      fi
+      ;;
+    --pages-branch)
+      if [[ -n "${2:-}" ]]; then
+        pages_branch="$2"
+        shift
+      fi
+      ;;
+    -m|--match-tags)
+      if [[ -n "${2:-}" ]]; then
+        match_tags="$2"
+        shift
+      else
+        echo "ERROR: '--match-tags' cannot be empty." >&2
+        show_help
+        exit 1
+      fi
+      ;;
+    -n | --install-dir)
+      if [[ -n "${2:-}" ]]; then
+        install_dir="$2"
+        shift
+      fi
+      ;;
+    -i | --install-only)
+      if [[ -n "${2:-}" ]]; then
+        install_only="$2"
+        shift
+      fi
+      ;;
+    -s | --skip-packaging)
+      if [[ -n "${2:-}" ]]; then
+        skip_packaging="$2"
+        shift
+      fi
+      ;;
+    --skip-existing)
+      if [[ -n "${2:-}" ]]; then
+        skip_existing="$2"
+        shift
+      fi
+      ;;
+    --skip-upload)
+      if [[ -n "${2:-}" ]]; then
+          skip_upload="$2"
+          shift
+      fi
+      ;;
+    -l | --mark-as-latest)
+      if [[ -n "${2:-}" ]]; then
+        mark_as_latest="$2"
+        shift
+      fi
+      ;;
+    --packages-with-index)
+      if [[ -n "${2:-}" ]]; then
+        packages_with_index="$2"
+        shift
+      fi
+      ;;
+    --oci-registry-url)
+      if [[ -n "${2:-}" ]]; then
+        oci_registry_url="$2"
+        shift
+      fi
+      ;;
+    --oci-username)
+      if [[ -n "${2:-}" ]]; then
+        oci_username="$2"
+        shift
+      fi
+      ;;
+    --oci-password)
+      if [[ -n "${2:-}" ]]; then
+        oci_password="$2"
+        shift
+      fi
+      ;;
+    --use-arm)
+      if [[ -n "${2:-}" ]]; then
+          use_arm="$2"
+          shift
+      fi
+      ;;
+    *)
+      break
+      ;;
+    esac
+
+    shift
+  done
+
+  if [[ -z "$owner" ]]; then
+    echo "ERROR: '-o|--owner' is required." >&2
+    show_help
+    exit 1
+  fi
+
+  if [[ -z "$repo" ]]; then
+    echo "ERROR: '-r|--repo' is required." >&2
+    show_help
+    exit 1
+  fi
+
+  if [[ -z "$install_dir" ]]; then
+    local arch
+    arch=$(uname -m)
+    install_dir="$RUNNER_TOOL_CACHE/cr/$version/$arch"
+  fi
+
+  if [[ -n "$install_only" ]]; then
+    echo "Will install cr tool and not run it..."
+    install_chart_releaser
+    exit 0
+  fi
+}
+
+install_chart_releaser() {
+  if [[ ! -d "$RUNNER_TOOL_CACHE" ]]; then
+    echo "Cache directory '$RUNNER_TOOL_CACHE' does not exist" >&2
+    exit 1
+  fi
+
+  if [[ ! -d "$install_dir" ]]; then
+    mkdir -p "$install_dir"
+    architecture=linux_amd64
+    if [[ "$use_arm" = true ]]; then
+      architecture=linux_arm64
+    fi
+    echo "Installing chart-releaser on $install_dir..."
+    curl -sSLo cr.tar.gz "https://github.com/helm/chart-releaser/releases/download/$version/chart-releaser_${version#v}_${architecture}.tar.gz"
+    tar -xzf cr.tar.gz -C "$install_dir"
+    rm -f cr.tar.gz
+  fi
+
+  echo 'Adding cr directory to PATH...'
+  export PATH="$install_dir:$PATH"
+}
+
+lookup_latest_tag() {
+  git fetch --tags >/dev/null 2>&1
+
+  args=("describe" "--tags" "--abbrev=0")
+  if [ -n "$match_tags" ]; then
+    args+=(--match="$match_tags")
+  fi
+  args+=(HEAD~)
+
+  if ! git "${args[@]}" 2> /dev/null; then
+    git rev-list --max-parents=0 --first-parent HEAD
+  fi
+}
+
+lookup_selected_charts() {
+  local chart resolved existing duplicate
+  local selected=() resolved_paths=()
+  while IFS= read -r chart || [[ -n "$chart" ]]; do
+    chart=${chart%$'\r'}
+    [[ -z "${chart//[[:space:]]/}" ]] && continue
+    if [[ ! -d "$chart" || ! -f "$chart/Chart.yaml" ]]; then
+      echo "ERROR: Selected chart '$chart' must be a directory containing Chart.yaml." >&2
+      return 1
+    fi
+    resolved=$(cd "$chart" && pwd -P)
+    duplicate=false
+    for existing in "${resolved_paths[@]}"; do
+      if [[ "$existing" == "$resolved" ]]; then
+        duplicate=true
+        break
+      fi
+    done
+    if [[ "$duplicate" = false ]]; then
+      selected+=("$chart")
+      resolved_paths+=("$resolved")
+    fi
+  done <<<"$1"
+
+  if [[ ${#selected[@]} -eq 0 ]]; then
+    echo "ERROR: '--charts' must contain at least one chart directory." >&2
+    return 1
+  fi
+  printf '%s\n' "${selected[@]}"
+}
+
+filter_charts() {
+  while read -r chart; do
+    [[ ! -d "$chart" ]] && continue
+    local file="$chart/Chart.yaml"
+    if [[ -f "$file" ]]; then
+      echo "$chart"
+    else
+      echo "WARNING: $file is missing, assuming that '$chart' is not a Helm chart. Skipping." 1>&2
+    fi
+  done
+}
+
+lookup_changed_charts() {
+  local commit="$1"
+
+  local changed_files
+  changed_files=$(git -c core.quotePath=false diff --find-renames --name-only "$commit" -- "$charts_dir")
+
+  local depth=$(($(tr "/" "\n" <<<"$charts_dir" | sed '/^\(\.\)*$/d' | wc -l) + 1))
+  local fields="1-${depth}"
+
+  cut -d '/' -f "$fields" <<<"$changed_files" | uniq | filter_charts
+}
+
+package_chart() {
+  local chart="$1"
+  local tmp_dir=".cr-package-tmp"
+
+  local args=("$chart" --package-path "$tmp_dir")
+  if [[ -n "$config" ]]; then
+    args+=(--config "$config")
+  fi
+
+  rm -rf "$tmp_dir" || return 1
+  mkdir -p "$tmp_dir" || return 1
+
+  echo "Packaging chart '$chart'..."
+  cr package "${args[@]}" || return 1
+
+  local packages=("$tmp_dir"/*.tgz)
+  if [[ ${#packages[@]} -ne 1 || ! -f "${packages[0]}" ]]; then
+    echo "ERROR: Expected exactly one package for '$chart' in $tmp_dir" >&2
+    return 1
+  fi
+
+  local packaged_identity
+  if ! packaged_identity=$(lookup_packaged_chart_identity "${packages[0]}"); then
+    echo "ERROR: Failed to read packaged chart metadata for '$chart'" >&2
+    return 1
+  fi
+
+  if [[ "$(basename "${packages[0]}" .tgz)" != "$packaged_identity" ]]; then
+    echo "ERROR: Packaged chart filename does not match '$packaged_identity'" >&2
+    return 1
+  fi
+
+  cp -f "${packages[0]}" .cr-release-packages/ || return 1
+  if [[ -f "${packages[0]}.prov" ]]; then
+    cp -f "${packages[0]}.prov" .cr-release-packages/ || return 1
+  fi
+  packaged_chart_versions+=("$packaged_identity")
+  rm -rf "$tmp_dir"
+}
+
+lookup_packaged_chart_identity() {
+  local chart="$1"
+  local metadata metadata_path
+
+  metadata_path=$(tar -tzf "$chart" | awk '
+    /^[^\/]+\/Chart\.yaml$/ { print; count++ }
+    END { if (count != 1) exit 1 }
+  ') || return 1
+  metadata=$(tar -xOzf "$chart" "$metadata_path") || return 1
+
+  awk '
+    function scalar(value) {
+      sub(/^[^:]*:[[:space:]]*/, "", value)
+      sub(/[[:space:]]+#.*$/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      if (value ~ /^".*"$/ || value ~ /^\047.*\047$/) {
+        value = substr(value, 2, length(value) - 2)
+      }
+      return value
+    }
+    /^name:/ { name = scalar($0) }
+    /^version:/ { version = scalar($0) }
+    END {
+      if (name !~ /^[[:alnum:]][[:alnum:]._-]*$/ || version !~ /^[[:alnum:]][[:alnum:].+_-]*$/) {
+        exit 1
+      }
+      print name "-" version
+    }
+  ' <<<"$metadata"
+}
+
+release_charts() {
+  local args=(-o "$owner" -r "$repo" -c "$(git rev-parse HEAD)")
+  if [[ -n "$config" ]]; then
+    args+=(--config "$config")
+  fi
+  if [[ "$packages_with_index" = true ]]; then
+    args+=(--packages-with-index --push --skip-existing)
+  elif [[ -n "$skip_existing" ]]; then
+    args+=(--skip-existing)
+  fi
+  if [[ "$mark_as_latest" = false ]]; then
+    args+=(--make-release-latest=false)
+  fi
+  if [[ -n "$pages_branch" ]]; then
+    args+=(--pages-branch "$pages_branch")
+  fi
+
+  echo 'Releasing charts...'
+  cr upload "${args[@]}"
+}
+
+push_charts() {
+  if [[ -z "$oci_registry_url" ]]; then
+    return
+  fi
+
+  local args=(--registry-url "$oci_registry_url" --package-path .cr-release-packages)
+  if [[ -n "$oci_username" ]]; then
+    args+=(--username "$oci_username")
+  fi
+  if [[ -n "$oci_password" ]]; then
+    args+=(--password "$oci_password")
+  fi
+  if [[ -n "$skip_existing" ]]; then
+    args+=(--skip-existing)
+  fi
+
+  echo "Pushing charts to OCI registry $oci_registry_url..."
+  cr push "${args[@]}"
+}
+
+update_index() {
+  if [[ -n "$skip_upload" ]]; then
+    echo "Skipping index upload..."
+    return
+  fi
+
+  local args=(-o "$owner" -r "$repo" --push)
+  if [[ -n "$config" ]]; then
+    args+=(--config "$config")
+  fi
+  if [[ "$packages_with_index" = true ]]; then
+    args+=(--packages-with-index)
+  fi
+  if [[ -n "$pages_branch" ]]; then
+    args+=(--pages-branch "$pages_branch")
+  fi
+
+  echo 'Updating charts repo index...'
+  cr index "${args[@]}"
+}
+
+main "$@"

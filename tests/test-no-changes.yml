@@ -1,0 +1,41 @@
+name: Test no chart changes detected
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Configure git
+        run: |
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+      - id: action
+        uses: .
+        with:
+          charts_dir: nonexistent-charts-dir
+          install_dir: ${{ runner.temp }}/cr-no-changes
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Assert changed_charts and chart_version are empty
+        env:
+          CHANGED: ${{ steps.action.outputs.changed_charts }}
+          VERSION: ${{ steps.action.outputs.chart_version }}
+        run: |
+          echo "changed_charts: '$CHANGED'"
+          echo "chart_version: '$VERSION'"
+          if [ -n "$CHANGED" ]; then
+            echo "FAIL: expected empty changed_charts"
+            exit 1
+          fi
+          if [ -n "$VERSION" ]; then
+            echo "FAIL: expected empty chart_version"
+            exit 1
+          fi
+          if [ -f changed_charts.txt ] || [ -f chart_version.txt ]; then
+            echo "FAIL: temp output files were not cleaned up"
+            exit 1
+          fi
+          echo "PASS"
