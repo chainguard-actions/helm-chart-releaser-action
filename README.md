@@ -10,6 +10,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 |---------|-----|-----------------|------------------|
 | v1.7.0 | [`v1.7.0`](https://github.com/chainguard-actions/helm-chart-releaser-action/tree/v1.7.0) | [`cae68fe`](https://github.com/helm/chart-releaser-action/commit/cae68fefc6b5f367a0275617c9f83181ba54714f) | [`HARDENING.md`](https://github.com/chainguard-actions/helm-chart-releaser-action/blob/v1.7.0/HARDENING.md) |
 | v1.8.0 | [`v1.8.0`](https://github.com/chainguard-actions/helm-chart-releaser-action/tree/v1.8.0) | [`df28710`](https://github.com/helm/chart-releaser-action/commit/df287104677278f869ca5480bd260358397cc3f9) | [`HARDENING.md`](https://github.com/chainguard-actions/helm-chart-releaser-action/blob/v1.8.0/HARDENING.md) |
+| v1.9.0 | [`v1.9.0`](https://github.com/chainguard-actions/helm-chart-releaser-action/tree/v1.9.0) | [`92c6b97`](https://github.com/helm/chart-releaser-action/commit/92c6b97fa9f664492a2592e0d1d80bc6bf378957) | [`HARDENING.md`](https://github.com/chainguard-actions/helm-chart-releaser-action/blob/v1.9.0/HARDENING.md) |
 
 ## Privacy
 
