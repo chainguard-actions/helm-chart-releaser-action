@@ -63,6 +63,7 @@ outputs:
   chart_version:
     description: "The version of the most recently generated charts; will be set even if no charts have been updated since the last run."
     value: ${{ steps.release.outputs.chart_version }}
+
 runs:
   using: composite
   steps:
@@ -153,10 +154,12 @@ runs:
         "$GITHUB_ACTION_PATH/cr.sh" "${args[@]}"
 
         if [[ -f changed_charts.txt ]]; then
-            cat changed_charts.txt >> "$GITHUB_OUTPUT"
+            safe_changed=$(tr -d '\n\r' < changed_charts.txt)
+            echo "$safe_changed" >> "$GITHUB_OUTPUT"
         fi
         if [[ -f chart_version.txt ]]; then
-            cat chart_version.txt >> "$GITHUB_OUTPUT"
+            safe_version=$(tr -d '\n\r' < chart_version.txt)
+            echo "$safe_version" >> "$GITHUB_OUTPUT"
         fi
         rm -f changed_charts.txt chart_version.txt
       shell: bash

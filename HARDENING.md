@@ -4,50 +4,35 @@
 
 > This file was generated automatically by the hardening agent.
 
-**Policy SHA:** `d636be7e43ef829af6e853da6b3c7566db9f72fe`
+**Policy SHA:** `374911c4be584df24e6da57af2d990570ef0f859`
 
 **Test Policy SHA:** `843adf9e4b8f85d0c08b27b9d0b09dd094b54702`
 
 **Harden Agent Version:** `2`
 
-Action **helm--chart-releaser-action/v1.7.0** was hardened automatically. 25 finding(s) were identified and resolved across 2 iteration(s).
+Action **helm--chart-releaser-action/v1.7.0** was hardened automatically. 26 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Sub-rule (a): The `run:` block in action.yml directly interpolates `${{ inputs.* }}` expressions inside shell command strings throughout the entire step. Before the shell ever sees the script, GitHub Actions substitutes these values verbatim, allowing an attacker-controlled input to inject arbitrary shell commands. Affected lines include:
-- Line 77: `args+=(--charts-dir "${{ inputs.charts_dir }}")`
-- Line 79: `if [[ -n "${{ inputs.version }}" ]]; then`
-- Line 80: `args+=(--version "${{ inputs.version }}")`
-- Line 83: `if [[ -n "${{ inputs.config }}" ]]; then`
-- Line 84: `args+=(--config "${{ inputs.config }}")`
-- Line 87: `if [[ -z "${{ inputs.install_dir }}" ]]; then`
-- Line 88: `install="$RUNNER_TOOL_CACHE/cr/${{ inputs.version }}/$(uname -m)"`
-- Line 92: `echo ${{ inputs.install_dir }} >> "$GITHUB_PATH"`
-- Line 93: `args+=(--install-dir "${{ inputs.install_dir }}")`
-- And all subsequent `${{ inputs.* }}` checks (install_only, skip_packaging, skip_existing, skip_upload, mark_as_latest, packages_with_index, pages_branch).
-All inputs should be passed via `env:` variables and referenced as `"$VAR"` in the shell script instead.
+Rule (a): the composite step 'release' puts GitHub Actions expressions straight into its run: script. Examples: `args+=(--charts-dir "${{ inputs.charts_dir }}")`, `if [[ -n "${{ inputs.version }}" ]]; then`, `install="$RUNNER_TOOL_CACHE/cr/${{ inputs.version }}/$(uname -m)"`, `echo ${{ inputs.install_dir }} >> "$GITHUB_PATH"`. The same pattern appears for inputs.config, install_only, skip_packaging, skip_existing, skip_upload, mark_as_latest, packages_with_index and pages_branch. An input value containing a quote or $(...) can run any command. Fix: pass each input through env: and expand it in double quotes.
 
 Locations:
 
-- `action.yml:77`
-- `action.yml:79`
-- `action.yml:80`
-- `action.yml:83`
-- `action.yml:84`
+- `action.yml:76`
+- `action.yml:78`
 - `action.yml:87`
-- `action.yml:88`
-- `action.yml:92`
-- `action.yml:93`
+- `action.yml:91`
 
 ### github-env-injection (severity: high)
 
-The `run:` block writes `${{ inputs.install_dir }}` directly to `$GITHUB_PATH` without sanitization. The offending line is: `echo ${{ inputs.install_dir }} >> "$GITHUB_PATH"`. This is a direct write of an attacker-controlled input value to a special GitHub environment file with no `printf '%s' ... | tr -d '\n\r'` sanitization step applied before the write. A malicious value containing newlines could inject additional entries into `$GITHUB_PATH`, potentially hijacking PATH lookups for subsequent steps. The fix is to route the value through an `env:` variable and sanitize it: `safe=$(printf '%s' "$INSTALL_DIR" | tr -d '\n\r'); echo "$safe" >> "$GITHUB_PATH"`.
+The composite step 'release' writes input-derived values to $GITHUB_PATH without the `printf '%s' ... | tr -d '\n\r'` sanitization step. Line 91 is `echo ${{ inputs.install_dir }} >> "$GITHUB_PATH"`, which writes inputs.install_dir directly and unquoted. Line 88 is `echo "$install" >> "$GITHUB_PATH"`, where $install contains ${{ inputs.version }}. A newline in either input adds arbitrary entries to PATH. The step also appends changed_charts.txt to $GITHUB_OUTPUT with `cat` and no sanitization. That file holds chart paths built from inputs.charts_dir.
 
 Locations:
 
-- `action.yml:92`
+- `action.yml:88`
+- `action.yml:91`
 
 ### static-inline-injection (severity: high)
 
@@ -233,21 +218,129 @@ Locations:
 
 - `action.yml:120`
 
+### prior-fix (severity: high)
+
+Carried forward from this version's previous harden, which fixed it; fix it again unless the code no longer has the problem. The previous harden changed action.yml without recording a finding for it, and this analysis reported nothing there. Re-apply its security changes unless the code no longer needs them. The previous patch:
+```diff
+diff --git a/action.yml b/action.yml
+index 017e5e7..f7753a5 100644
+--- a/action.yml
++++ b/action.yml
+@@ -63,61 +63,91 @@ outputs:
+   chart_version:
+     description: "The version of the most recently generated charts; will be set even if no charts have been updated since the last run."
+     value: ${{ steps.release.outputs.chart_version }}
+-
+ runs:
+   using: composite
+   steps:
+     - id: release
++      env:
++        INPUT_VERSION: ${{ inputs.version }}
++        INPUT_CONFIG: ${{ inputs.config }}
++        INPUT_CHARTS_DIR: ${{ inputs.charts_dir }}
++        INPUT_INSTALL_DIR: ${{ inputs.install_dir }}
++        INPUT_INSTALL_ONLY: ${{ inputs.install_only }}
++        INPUT_SKIP_PACKAGING: ${{ inputs.skip_packaging }}
++        INPUT_SKIP_EXISTING: ${{ inputs.skip_existing }}
++        INPUT_SKIP_UPLOAD: ${{ inputs.skip_upload }}
++        INPUT_MARK_AS_LATEST: ${{ inputs.mark_as_latest }}
++        INPUT_PACKAGES_WITH_INDEX: ${{ inputs.packages_with_index }}
++        INPUT_PAGES_BRANCH: ${{ inputs.pages_branch }}
+       run: |
+         owner=$(cut -d '/' -f 1 <<< "$GITHUB_REPOSITORY")
+         repo=$(cut -d '/' -f 2 <<< "$GITHUB_REPOSITORY")
+ 
+         args=(--owner "$owner" --repo "$repo")
+-        args+=(--charts-dir "${{ inputs.charts_dir }}")
++        args+=(--charts-dir "$INPUT_CHARTS_DIR")
+ 
+-        if [[ -n "${{ inputs.version }}" ]]; then
+-            args+=(--version "${{ inputs.version }}")
++        if [[ -n "$INPUT_VERSION" ]]; then
++            args+=(--version "$INPUT_VERSION")
+         fi
+ 
+-        if [[ -n "${{ inputs.config }}" ]]; then
+-            args+=(--config "${{ inputs.config }}")
++        if [[ -n "$INPUT_CONFIG" ]]; then
++            args+=(--config "$INPUT_CONFIG")
+         fi
+ 
+-        if [[ -z "${{ inputs.install_dir }}" ]]; then
+-          install="$RUNNER_TOOL_CACHE/cr/${{ inputs.version }}/$(uname -m)"
+-          echo "$install" >> "$GITHUB_PATH"
+-          args+=(--install-dir "$install")
++        if [[ -z "$INPUT_INSTALL_DIR" ]]; then
++          install="$RUNNER_TOOL_CACHE/cr/$INPUT_VERSION/$(uname -m)"
++          safe_install=$(printf '%s' "$install" | tr -d '\n\r')
++          echo "$safe_install" >> "$GITHUB_PATH"
++          args+=(--install-dir "$safe_install")
+         else
+-          echo ${{ inputs.install_dir }} >> "$GITHUB_PATH"
+-          args+=(--install-dir "${{ inputs.install_dir }}")
++          safe_install_dir=$(printf '%s' "$INPUT_INSTALL_DIR" | tr -d '\n\r')
++          echo "$safe_install_dir" >> "$GITHUB_PATH"
++          args+=(--install-dir "$safe_install_dir")
+         fi
+ 
+-        if [[ -n "${{ inputs.install_only }}" ]]; then
+-            args+=(--install-only "${{ inputs.install_only }}")
++        if [[ -n "$INPUT_INSTALL_ONLY" ]]; then
++            args+=(--install-only "$INPUT_INSTALL_ONLY")
+         fi
+ 
+-        if [[ -n "${{ inputs.skip_packaging }}" ]]; then
+-            args+=(--skip-packaging "${{ inputs.skip_packaging }}")
++        if [[ -n "$INPUT_SKIP_PACKAGING" ]]; then
++            args+=(--skip-packaging "$INPUT_SKIP_PACKAGING")
+         fi
+ 
+-        if [[ -n "${{ inputs.skip_existing }}" ]]; then
+-            args+=(--skip-existing "${{ inputs.skip_existing }}")
++        if [[ -n "$INPUT_SKIP_EXISTING" ]]; then
++            args+=(--skip-existing "$INPUT_SKIP_EXISTING")
+         fi
+ 
+-        if [[ -n "${{ inputs.skip_upload }}" ]]; then
+-            args+=(--skip-upload "${{ inputs.skip_upload }}")
++        if [[ -n "$INPUT_SKIP_UPLOAD" ]]; then
++            args+=(--skip-upload "$INPUT_SKIP_UPLOAD")
+         fi
+ 
+-        if [[ -n "${{ inputs.mark_as_latest }}" ]]; then
+-            args+=(--mark-as-latest "${{ inputs.mark_as_latest }}")
++        if [[ -n "$INPUT_MARK_AS_LATEST" ]]; then
++            args+=(--mark-as-latest "$INPUT_MARK_AS_LATEST")
+         fi
+ 
+-        if [[ -n "${{ inputs.packages_with_index }}" ]]; then
+-            args+=(--packages-with-index "${{ inputs.packages_with_index }}")
++        if [[ -n "$INPUT_PACKAGES_WITH_INDEX" ]]; then
++            args+=(--packages-with-index "$INPUT_PACKAGES_WITH_INDEX")
+         fi
+ 
+-        i
+... (truncated)
+```
+
+Locations:
+
+- `action.yml`
+
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, github-env-injection, static-inline-injection
+**Fixes applied:** script-injection, github-env-injection, static-inline-injection, prior-fix
 
 **Notes:**
 
-Moved all ${{ inputs.* }} expressions from the run: shell block into a step-level env: block. Each input is now mapped to an INPUT_* environment variable (INPUT_VERSION, INPUT_CONFIG, INPUT_CHARTS_DIR, INPUT_INSTALL_DIR, INPUT_INSTALL_ONLY, INPUT_SKIP_PACKAGING, INPUT_SKIP_EXISTING, INPUT_SKIP_UPLOAD, INPUT_MARK_AS_LATEST, INPUT_PACKAGES_WITH_INDEX, INPUT_PAGES_BRANCH). The shell script references these as plain $INPUT_* variables. Additionally, the install_dir write to $GITHUB_PATH is now sanitized with `printf '%s' "$INPUT_INSTALL_DIR" | tr -d '\n\r'` before writing, preventing newline injection attacks.
+Fixed the script-injection, file-write and prior-fix findings in action.yml. Nothing was run or tested.
 
-### Iteration 2
+- **Script injection:** all 11 inputs (`version`, `config`, `charts_dir`, `install_dir`, `install_only`, `skip_packaging`, `skip_existing`, `skip_upload`, `mark_as_latest`, `packages_with_index`, `pages_branch`) now reach the `release` step through `env:` as `INPUT_*` variables. The script uses them only as double-quoted `"$INPUT_*"`. The `args` array, its argument boundaries and the `-n` checks are the same as before.
+- **`GITHUB_PATH` writes:** both install-dir values (the default cache path and `inputs.install_dir`) have newlines removed with `printf '%s' | tr -d '\n\r'` before they are written. The same cleaned value is what gets passed as `--install-dir`.
+- **`GITHUB_OUTPUT` writes:** the contents of `changed_charts.txt` and `chart_version.txt` now have newlines removed before they are appended. `cr.sh` writes each file as a single `key=value` line, so the outputs themselves don't change.
 
-**Fixes applied:** github-env-injection, hardcoded-credentials
-
-**Notes:**
-
-1. action.yml (line ~91): Added sanitization for the `install` variable in the `if [[ -z "$INPUT_INSTALL_DIR" ]]` branch. The variable now goes through `printf '%s' "$install" | tr -d '\n\r'` before being written to $GITHUB_PATH, preventing newline injection from a caller-controlled `inputs.version` value. 2. .github/workflows/test-action.yml (lines 24 and 44): Replaced both instances of `CR_TOKEN: "FAKE_SECRETS"` with `CR_TOKEN: ${{ secrets.CR_TOKEN }}` to use a proper GitHub Actions secret reference instead of a hardcoded literal credential.
+This re-applies what the previous harden did.
 
